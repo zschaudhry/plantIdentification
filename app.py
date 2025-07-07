@@ -4,9 +4,12 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from typing import Optional
+
 
 
 from wikipedia_utils import get_wikipedia_section, get_wikipedia_summary
+from utils import highlight_toxicity
 
 # Load environment variables from .env file
 load_dotenv()
@@ -16,14 +19,17 @@ st.title("🌿 Plant Species Identifier 🌿")
 st.write("📷 Upload a plant image to identify its species using the Pl@ntNet API.")
 
 
-def get_api_key():
+def get_api_key() -> Optional[str]:
+    """Fetch the Pl@ntNet API key from environment variables."""
     api_key = os.getenv("PLANTNET_API_KEY")
     if not api_key:
         st.error("Pl@ntNet API key not found. Please set PLANTNET_API_KEY in your .env file.")
         return None
     return api_key
 
+@st.cache_data(show_spinner=False)
 def identify_plant(image_file, organ, api_key):
+    """Identify plant species using the Pl@ntNet API. Caches results for identical images/organs/api_key."""
     url = f"https://my-api.plantnet.org/v2/identify/all?api-key={api_key}"
     files = {'images': (image_file.name, image_file, image_file.type)}
     data = {'organs': organ}
@@ -35,7 +41,8 @@ def identify_plant(image_file, organ, api_key):
         st.error(f"Pl@ntNet API request failed: {e}")
         return None
 
-def build_results_dataframe(results):
+def build_results_dataframe(results) -> pd.DataFrame:
+    """Build a DataFrame from Pl@ntNet API results."""
     table_data = []
     for res in results:
         species = res['species'].get('scientificNameWithoutAuthor', '')
@@ -52,8 +59,8 @@ def build_results_dataframe(results):
         })
     return pd.DataFrame(table_data)
 
-
-def show_aggrid(df):
+def show_aggrid(df: pd.DataFrame):
+    """Display a DataFrame in an interactive AgGrid table."""
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_selection('single', use_checkbox=False)
     grid_options = gb.build()
@@ -78,13 +85,18 @@ def main():
         st.info("Please upload an image to begin.")
         return
 
-    st.image(uploaded_file, caption="Uploaded Image", width=150)
+    st.image(uploaded_file, caption="Uploaded plant image", width=150)
     api_key = get_api_key()
     if not api_key:
         return
 
     organ_options = ["auto", "leaf", "flower", "fruit", "bark", "habit"]
-    organ = st.selectbox("Select the organ shown in the image:", organ_options, index=0)
+    organ = st.selectbox(
+        "Select the organ shown in the image:",
+        organ_options,
+        index=0,
+        help="Choose the plant part most visible in your photo for best results."
+    )
     with st.spinner("Identifying..."):
         result = identify_plant(uploaded_file, organ, api_key)
     if not result or 'results' not in result or not result['results']:
@@ -92,13 +104,12 @@ def main():
         return
 
     df = build_results_dataframe(result['results'])
-    grid_response = show_aggrid(df)
+    show_aggrid(df)
 
     scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
     if not scientific_names:
         st.warning("No scientific names found in results.")
         return
-
 
     selected_name = st.selectbox("Select a scientific name:", scientific_names, index=0)
     # Reset toxicity show more state if a new plant is selected
@@ -109,7 +120,8 @@ def main():
         st.info("Select a scientific name from the dropdown to see its details below.")
         return
 
-    wiki_data = get_wikipedia_summary(selected_name)
+    with st.spinner("Fetching Wikipedia information..."):
+        wiki_data = get_wikipedia_summary(selected_name)
     if wiki_data:
         st.markdown(f"### {wiki_data.get('title', selected_name)} 🌱")
         if 'thumbnail' in wiki_data:
@@ -124,35 +136,22 @@ def main():
         if timestamp:
             st.markdown(f"**⏰ Last updated:** {timestamp}")
 
-
         # --- Invasive Species Section for this species ---
         page_title = wiki_data.get('title', selected_name)
-        invasive_section = get_wikipedia_section(page_title, "Invasive species")
+        with st.spinner("Fetching invasive species info..."):
+            invasive_section = get_wikipedia_section(page_title, "Invasive species")
         st.markdown('**🦠 Invasive Species (from Wikipedia page):**')
-
         if invasive_section:
             st.markdown(invasive_section)
         else:
             st.info("No invasive species information available for this plant.")
 
         # --- Toxicity Section for this species ---
-        toxicity_section = get_wikipedia_section(page_title, "Toxicity")
+        with st.spinner("Fetching toxicity info..."):
+            toxicity_section = get_wikipedia_section(page_title, "Toxicity")
         st.markdown('<div style="font-weight:bold; font-size:1.1em; margin-top:1.5em; margin-bottom:0.5em; color:#b30000;">☠️ Toxicity (from Wikipedia page):</div>', unsafe_allow_html=True)
         if toxicity_section:
-            import re
-            # Highlight warning words
-            highlight_words = [
-                (r'(?i)danger(ous)?', '<span style="color:#b30000; font-weight:bold;">\\g<0></span>'),
-                (r'(?i)toxic(ity)?', '<span style="color:#b30000; font-weight:bold;">\\g<0></span>'),
-                (r'(?i)poison(ous)?', '<span style="color:#b30000; font-weight:bold;">\\g<0></span>'),
-                (r'(?i)allergic', '<span style="color:#e67300; font-weight:bold;">\\g<0></span>'),
-                (r'(?i)anaphylaxis', '<span style="color:#e67300; font-weight:bold;">\\g<0></span>'),
-                (r'(?i)rash|blister|itch', '<span style="color:#e67300; font-weight:bold;">\\g<0></span>'),
-            ]
-            pretty_text = toxicity_section
-            for pattern, repl in highlight_words:
-                pretty_text = re.sub(pattern, repl, pretty_text)
-            # Split into words and display first 150, with a 'Show more' button for the rest
+            pretty_text = highlight_toxicity(toxicity_section)
             words = pretty_text.split()
             if len(words) > 150:
                 short_text = ' '.join(words[:150])
