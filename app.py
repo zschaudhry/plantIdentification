@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-import re
+
 from wikipedia_utils import get_wikipedia_section, get_wikipedia_summary
 
 # Load environment variables from .env file
@@ -52,6 +52,7 @@ def build_results_dataframe(results):
         })
     return pd.DataFrame(table_data)
 
+
 def show_aggrid(df):
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_selection('single', use_checkbox=False)
@@ -70,44 +71,6 @@ def show_aggrid(df):
 
 
 
-def get_wikidata_taxonomy(wikidata_id):
-    wikidata_url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikidata_id}.json'
-    try:
-        wd_resp = requests.get(wikidata_url)
-        if wd_resp.status_code != 200:
-            return None
-        wd_data = wd_resp.json()
-        entity = wd_data['entities'].get(wikidata_id, {})
-        claims = entity.get('claims', {})
-        taxonomy_props = {
-            'kingdom': 'P75',
-            'phylum': 'P76',
-            'class': 'P77',
-            'order': 'P70',
-            'family': 'P71',
-            'genus': 'P74',
-            'species': 'P225',
-        }
-        taxonomy = {}
-        for rank, prop in taxonomy_props.items():
-            if prop in claims:
-                val = claims[prop][0]['mainsnak']['datavalue']['value']
-                if isinstance(val, dict) and 'id' in val:
-                    label_url = f'https://www.wikidata.org/wiki/Special:EntityData/{val["id"]}.json'
-                    label_resp = requests.get(label_url)
-                    if label_resp.status_code == 200:
-                        label_data = label_resp.json()
-                        label_entity = label_data['entities'].get(val['id'], {})
-                        label = label_entity.get('labels', {}).get('en', {}).get('value', val['id'])
-                        taxonomy[rank] = label
-                    else:
-                        taxonomy[rank] = val['id']
-                else:
-                    taxonomy[rank] = str(val)
-        return taxonomy if taxonomy else None
-    except Exception as e:
-        st.info(f"Could not fetch taxonomy from Wikidata: {e}")
-        return None
 
 def main():
     uploaded_file = st.sidebar.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"])
