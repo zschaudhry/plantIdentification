@@ -76,9 +76,6 @@ def show_aggrid(df: pd.DataFrame):
     )
     return grid_response
 
-
-
-
 def main():
     uploaded_file = st.sidebar.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"])
     if not uploaded_file:
@@ -90,7 +87,7 @@ def main():
     if not api_key:
         return
 
-    organ_options = ["auto", "leaf", "flower", "fruit", "bark", "habit"]
+    organ_options = ["auto", "leaf", "flower", "fruit", "bark"]
     organ = st.selectbox(
         "Select the organ shown in the image:",
         organ_options,
