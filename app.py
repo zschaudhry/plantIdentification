@@ -5,11 +5,16 @@ from dotenv import load_dotenv
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
+import re
+from wikipedia_utils import get_wikipedia_section, get_wikipedia_summary
+
 # Load environment variables from .env file
 load_dotenv()
 
+# Streamlit UI Title
 st.title("🌿 Plant Species Identifier 🌿")
 st.write("📷 Upload a plant image to identify its species using the Pl@ntNet API.")
+
 
 def get_api_key():
     api_key = os.getenv("PLANTNET_API_KEY")
@@ -55,7 +60,7 @@ def show_aggrid(df):
     grid_response = AgGrid(
         df,
         gridOptions=grid_options,
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        update_mode=GridUpdateMode.NO_UPDATE,
         theme='streamlit',
         height=grid_height,
         fit_columns_on_grid_load=True,
@@ -63,15 +68,7 @@ def show_aggrid(df):
     )
     return grid_response
 
-def get_wikipedia_summary(scientific_name):
-    wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{scientific_name.replace(' ', '_')}"
-    try:
-        resp = requests.get(wiki_url)
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as e:
-        st.error(f"Wikipedia request failed: {e}")
-    return None
+
 
 def get_wikidata_taxonomy(wikidata_id):
     wikidata_url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikidata_id}.json'
@@ -139,7 +136,12 @@ def main():
         st.warning("No scientific names found in results.")
         return
 
+
     selected_name = st.selectbox("Select a scientific name:", scientific_names, index=0)
+    # Reset toxicity show more state if a new plant is selected
+    if 'toxicity_show_more' in st.session_state and st.session_state.get('last_selected_name') != selected_name:
+        st.session_state['toxicity_show_more'] = False
+    st.session_state['last_selected_name'] = selected_name
     if not selected_name:
         st.info("Select a scientific name from the dropdown to see its details below.")
         return
@@ -158,6 +160,52 @@ def main():
         timestamp = wiki_data.get('timestamp')
         if timestamp:
             st.markdown(f"**⏰ Last updated:** {timestamp}")
+
+
+        # --- Invasive Species Section for this species ---
+        page_title = wiki_data.get('title', selected_name)
+        invasive_section = get_wikipedia_section(page_title, "Invasive species")
+        st.markdown('**🦠 Invasive Species (from Wikipedia page):**')
+
+        if invasive_section:
+            st.markdown(invasive_section)
+        else:
+            st.info("No invasive species information available for this plant.")
+
+        # --- Toxicity Section for this species ---
+        toxicity_section = get_wikipedia_section(page_title, "Toxicity")
+        st.markdown('<div style="font-weight:bold; font-size:1.1em; margin-top:1.5em; margin-bottom:0.5em; color:#b30000;">☠️ Toxicity (from Wikipedia page):</div>', unsafe_allow_html=True)
+        if toxicity_section:
+            import re
+            # Highlight warning words
+            highlight_words = [
+                (r'(?i)danger(ous)?', '<span style="color:#b30000; font-weight:bold;">\\g<0></span>'),
+                (r'(?i)toxic(ity)?', '<span style="color:#b30000; font-weight:bold;">\\g<0></span>'),
+                (r'(?i)poison(ous)?', '<span style="color:#b30000; font-weight:bold;">\\g<0></span>'),
+                (r'(?i)allergic', '<span style="color:#e67300; font-weight:bold;">\\g<0></span>'),
+                (r'(?i)anaphylaxis', '<span style="color:#e67300; font-weight:bold;">\\g<0></span>'),
+                (r'(?i)rash|blister|itch', '<span style="color:#e67300; font-weight:bold;">\\g<0></span>'),
+            ]
+            pretty_text = toxicity_section
+            for pattern, repl in highlight_words:
+                pretty_text = re.sub(pattern, repl, pretty_text)
+            # Split into words and display first 150, with a 'Show more' button for the rest
+            words = pretty_text.split()
+            if len(words) > 150:
+                short_text = ' '.join(words[:150])
+                if 'toxicity_show_more' not in st.session_state:
+                    st.session_state['toxicity_show_more'] = False
+                if not st.session_state['toxicity_show_more']:
+                    st.markdown(f'<blockquote style="background:#fff6f6; border-left:5px solid #b30000; padding:1em 1.5em; border-radius:6px; margin:0 0 1em 0; font-size:1.05em; line-height:1.7; color:#222;">{short_text}...</blockquote>', unsafe_allow_html=True)
+                    if st.button('Show more', key='toxicity_show_more_btn'):
+                        st.session_state['toxicity_show_more'] = True
+                elif st.session_state['toxicity_show_more']:
+                    st.markdown(f'<blockquote style="background:#fff6f6; border-left:5px solid #b30000; padding:1em 1.5em; border-radius:6px; margin:0 0 1em 0; font-size:1.05em; line-height:1.7; color:#222;">{pretty_text}</blockquote>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<blockquote style="background:#fff6f6; border-left:5px solid #b30000; padding:1em 1.5em; border-radius:6px; margin:0 0 1em 0; font-size:1.05em; line-height:1.7; color:#222;">{pretty_text}</blockquote>', unsafe_allow_html=True)
+        else:
+            st.info("No toxicity information available for this plant.")
+
         st.markdown(f"[🔗 Read more on Wikipedia]({wiki_data.get('content_urls', {}).get('desktop', {}).get('page', '')})")
 
 if __name__ == "__main__":
