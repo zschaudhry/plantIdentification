@@ -1,12 +1,16 @@
 # Plant Species Identifier with Pl@ntNet API
 
-This Streamlit app lets you identify plant species from an image using the Pl@ntNet API. It displays possible matches in a table, and you can click a row to view more information from Wikipedia.
+
+This Streamlit app lets you identify plant species from an image using the Pl@ntNet API. It displays possible matches in an interactive table, and you can select a species to view detailed information from Wikipedia, including summary, description, invasive status, and toxicity (with highlighted warnings).
 
 ## Features
 - Upload a plant image (jpg, jpeg, png)
 - Select the plant organ (leaf, flower, fruit, bark, habit, auto)
 - View results in an interactive table (AgGrid)
-- Click a row and fetch Wikipedia info for the selected species
+- Select a species to view Wikipedia info, including:
+  - Title, summary, and description
+  - Invasive species and toxicity sections (if available)
+  - Toxicity warnings are highlighted and expandable
 
 ## Setup
 1. **Clone the repository**
@@ -28,8 +32,8 @@ This Streamlit app lets you identify plant species from an image using the Pl@nt
 ## Usage
 - Upload a plant image using the sidebar.
 - Select the organ type.
-- View the results table. Click a row to select a species.
-- Click the "Show Wikipedia info for ..." button to see more details.
+- View the results table. Select a species from the dropdown to see its Wikipedia details.
+- Invasive species and toxicity info (if available) are shown below the summary.
 
 ## Requirements
 - Python 3.7+
@@ -38,6 +42,7 @@ This Streamlit app lets you identify plant species from an image using the Pl@nt
 ## Notes
 - Your IP must be allowed by Pl@ntNet API. See their documentation if you get a 403 error.
 - This app uses [streamlit-aggrid](https://github.com/PablocFonseca/streamlit-aggrid) for interactive tables.
+- Wikipedia logic is modularized in `wikipedia_utils.py` for maintainability.
 
 ## License
 MIT
