@@ -1,7 +1,12 @@
+
 import pandas as pd
 import datetime
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+import re
+import requests
+import numpy as np
+from pyproj import Transformer
 
 def show_aggrid(df: pd.DataFrame, grid_key: str = "plant_grid"):
     """Display a DataFrame in an interactive AgGrid table with dynamic column widths."""
@@ -82,7 +87,6 @@ def show_invasive_species_results(fs_results):
     if unit_col in df.columns:
         summary = df.groupby(unit_col).size().reset_index(name='🧾 Record Count')
         summary['orig_name'] = summary[unit_col]  # Save original for display
-        import re
         def normalize_name(n):
             if not isinstance(n, str):
                 return ''
@@ -96,8 +100,6 @@ def show_invasive_species_results(fs_results):
         st.dataframe(summary[[unit_col, '🧾 Record Count']], use_container_width=True, hide_index=True)
 
         # --- Forest Service Unit Name Map Visualization ---
-        import requests
-        import numpy as np
         @st.cache_data(show_spinner=False)
         def fetch_forest_boundaries():
             fs_url = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query"
@@ -107,7 +109,6 @@ def show_invasive_species_results(fs_results):
                 'returnGeometry': 'true',
                 'f': 'json'
             }
-            import requests
             try:
                 resp = requests.get(fs_url, params=params, timeout=40)
                 if resp.status_code == 200:
@@ -127,7 +128,6 @@ def show_invasive_species_results(fs_results):
 
             # Use norm_name for matching, orig_name for display
             summary = summary.copy()
-            from pyproj import Transformer
             transformer = Transformer.from_crs(3857, 4326, always_xy=True)
             forest_points = {}
             for feat in geo_data.get('features', []):
