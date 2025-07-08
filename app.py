@@ -165,8 +165,6 @@ def query_invasive_species_database(scientific_name):
         "COMMON_NAME",
         "PROJECT_CODE",
         "PLANT_STATUS",
-        "INFESTED_AREA",
-        "INFESTED_PERCENT",
         "FS_UNIT_NAME",
         "EXAMINERS",
         "LAST_UPDATE"

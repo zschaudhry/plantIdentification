@@ -7,8 +7,10 @@ def show_aggrid(df: pd.DataFrame, grid_key: str = "plant_grid"):
     """Display a DataFrame in an interactive AgGrid table with dynamic column widths."""
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_selection('single', use_checkbox=False)
+    # Set minWidth for each column to at least the label width in pixels (estimate: 8px per character + padding)
     for col in df.columns:
-        gb.configure_column(col, autoWidth=True)
+        min_width = max(120, len(str(col)) * 10 + 32)  # 10px per char + 32px padding, min 120px
+        gb.configure_column(col, minWidth=min_width, autoWidth=True)
     grid_options = gb.build()
     grid_height = min(500, max(150, 35 * (len(df) + 1)))
     grid_response = AgGrid(
@@ -27,22 +29,24 @@ def show_invasive_species_results(fs_results):
     if not features:
         st.info("No invasive species data found for this plant.")
         return
+    # Map short field names to full labels for display (with emojis)
+    FIELD_LABELS = {
+        'NRCS_PLANT_CODE': '🆔 NRCS Plant Code',
+        'SCIENTIFIC_NAME': '🔬 Scientific Name',
+        'COMMON_NAME': '🌱 Common Name',
+        'PROJECT_CODE': '📁 Project Code',
+        'PLANT_STATUS': '🚦 Plant Status',
+        'FS_UNIT_NAME': '🏞️ Forest Service Unit Name',
+        'EXAMINERS': '🧑‍🔬 Examiners',
+        'LAST_UPDATE': '📅 Last Update',
+    }
     data = []
     for feature in features:
         attributes = feature.get('attributes', {})
-        last_update_raw = attributes.get('LAST_UPDATE', '')
-        data.append({
-            'NRCS Plant Code': attributes.get('NRCS_PLANT_CODE', ''),
-            'Scientific Name': attributes.get('SCIENTIFIC_NAME', ''),
-            'Common Name': attributes.get('COMMON_NAME', ''),
-            'Project Code': attributes.get('PROJECT_CODE', ''),
-            'Plant Status': attributes.get('PLANT_STATUS', ''),
-            'Infested Area (acres)': attributes.get('INFESTED_AREA', 0),
-            'Infested Percent': attributes.get('INFESTED_PERCENT', 0),
-            'FS Unit Name': attributes.get('FS_UNIT_NAME', ''),
-            'Examiners': attributes.get('EXAMINERS', ''),
-            'Last Update': last_update_raw
-        })
+        row = {}
+        for key, label in FIELD_LABELS.items():
+            row[label] = attributes.get(key, '')
+        data.append(row)
     df = pd.DataFrame(data)
     if 'Last Update' in df.columns:
         def parse_last_update(val):
@@ -74,4 +78,20 @@ def show_invasive_species_results(fs_results):
         df['Last Update'] = df['Last Update'].apply(parse_last_update)
         df['Last Update Sort'] = pd.to_datetime(df['Last Update'], errors='coerce')
         df = df.sort_values('Last Update Sort', ascending=False).drop(columns=['Last Update Sort'])
+
+    # --- Summary Table by Forest Service Unit Name ---
+    unit_col = '🏞️ Forest Service Unit Name'
+    if unit_col in df.columns:
+        summary = df.groupby(unit_col).size().reset_index(name='🧾 Record Count')
+        summary = summary.sort_values('🧾 Record Count', ascending=False)
+        st.markdown('## 🏞️ Summary by Forest Name')
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+        # Dropdown filter
+        all_units = summary[unit_col].dropna().tolist()
+        all_units = [u for u in all_units if u]  # Remove empty strings
+        selected_unit = st.selectbox('🏞️ Filter by Forest Service Unit Name', ['All'] + all_units, key='unit_filter')
+        if selected_unit != 'All':
+            df = df[df[unit_col] == selected_unit]
+
     show_aggrid(df, grid_key="invasive_species_grid")
