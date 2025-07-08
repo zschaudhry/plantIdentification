@@ -3,13 +3,14 @@ import requests
 import os
 from dotenv import load_dotenv
 import pandas as pd
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from invasive_utils import show_invasive_species_results
 from typing import Optional
 
 
 
 from wikipedia_utils import get_wikipedia_section, get_wikipedia_summary
 from utils import highlight_toxicity
+from invasive_utils import show_aggrid
 
 # Load environment variables from .env file
 load_dotenv()
@@ -57,24 +58,9 @@ def build_results_dataframe(results) -> pd.DataFrame:
             'Family': family,
             'Confidence Score': f"{score:.2f}"
         })
+
     return pd.DataFrame(table_data)
 
-def show_aggrid(df: pd.DataFrame):
-    """Display a DataFrame in an interactive AgGrid table."""
-    gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_selection('single', use_checkbox=False)
-    grid_options = gb.build()
-    grid_height = min(500, max(150, 35 * (len(df) + 1)))
-    grid_response = AgGrid(
-        df,
-        gridOptions=grid_options,
-        update_mode=GridUpdateMode.NO_UPDATE,
-        theme='streamlit',
-        height=grid_height,
-        fit_columns_on_grid_load=True,
-        key="plant_grid"
-    )
-    return grid_response
 
 def main():
     uploaded_file = st.sidebar.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"])
@@ -101,7 +87,7 @@ def main():
         return
 
     df = build_results_dataframe(result['results'])
-    show_aggrid(df)
+    show_aggrid(df, grid_key="plant_grid")
 
     scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
     if not scientific_names:
@@ -109,6 +95,7 @@ def main():
         return
 
     selected_name = st.selectbox("Select a scientific name:", scientific_names, index=0)
+
     # Reset toxicity show more state if a new plant is selected
     if 'toxicity_show_more' in st.session_state and st.session_state.get('last_selected_name') != selected_name:
         st.session_state['toxicity_show_more'] = False
@@ -116,7 +103,10 @@ def main():
     if not selected_name:
         st.info("Select a scientific name from the dropdown to see its details below.")
         return
-
+    fs_results=query_invasive_species_database(selected_name)
+    if fs_results:
+        st.markdown("### Invasive Species Information from the Forest Service 🌍")
+        show_invasive_species_results(fs_results)
     with st.spinner("Fetching Wikipedia information..."):
         wiki_data = get_wikipedia_summary(selected_name)
     if wiki_data:
@@ -167,6 +157,31 @@ def main():
 
         st.markdown(f"[🔗 Read more on Wikipedia]({wiki_data.get('content_urls', {}).get('desktop', {}).get('page', '')})")
 
+def query_invasive_species_database(scientific_name):
+    url = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InvasiveSpecies_01/MapServer/0/query"
+    out_fields = [
+        "NRCS_PLANT_CODE",
+        "SCIENTIFIC_NAME",
+        "COMMON_NAME",
+        "PROJECT_CODE",
+        "PLANT_STATUS",
+        "INFESTED_AREA",
+        "INFESTED_PERCENT",
+        "FS_UNIT_NAME",
+        "EXAMINERS",
+        "LAST_UPDATE"
+    ]
+    params = {
+        'where': f"SCIENTIFIC_NAME='{scientific_name}'",
+        'outFields': ",".join(out_fields),
+        'returnGeometry': 'false',
+        'f': 'json'
+    }
+
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        return response.json()
+    return None
 if __name__ == "__main__":
     main()
     st.markdown('<hr style="margin-top:2em;margin-bottom:0.5em;">', unsafe_allow_html=True)
