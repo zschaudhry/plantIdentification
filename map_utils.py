@@ -43,6 +43,7 @@ def show_invasive_map(invasive_map_df: pd.DataFrame, width=800, height=600):
     deck = pdk.Deck(
         layers=[layer],
         initial_view_state=view_state,
-        map_style='road'
+        map_style='road',
+        tooltip=True
     )
     st.pydeck_chart(deck, use_container_width=True)
