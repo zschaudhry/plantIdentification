@@ -3,11 +3,11 @@ import requests
 import os
 from dotenv import load_dotenv
 import pandas as pd
-from invasive_utils import show_invasive_species_results
 from typing import Optional
 from wikipedia_utils import get_wikipedia_section, get_wikipedia_summary
 from utils import highlight_toxicity
 from invasive_utils import show_aggrid
+import numpy as np
 
 # Load environment variables from .env file
 load_dotenv()
@@ -84,90 +84,159 @@ def main():
         return
 
     df = build_results_dataframe(result['results'])
-    aggrid_response = show_aggrid(df, grid_key="plant_grid")
+    plantnet_df = df.copy()
+    invasive_df = pd.DataFrame()
+    summary_df = pd.DataFrame()
+    invasive_map_df = pd.DataFrame()
+    selected_scientific_name = None
 
     scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
     if not scientific_names:
         st.warning("No scientific names found in results.")
         return
 
-    # Get selected row from AgGrid (if any), else default to first row
-    selected_row = None
-    if aggrid_response and aggrid_response.get('selected_rows'):
-        selected_row = aggrid_response['selected_rows'][0]
-    elif not df.empty:
-        selected_row = df.iloc[0].to_dict()
+    # Query invasive species database for the selected scientific name (will be set in Tab 1)
+    fs_results = None
+    # --- Show all results in 5 tabs ---
+    import invasive_utils as iu
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🌱 Pl@ntNet Data",
+        "🌲 Forest Table",
+        "📊 Summary Table",
+        "🗺️ Map",
+        "📚 Wikipedia Info"
+    ])
+    with tab1:
+        st.markdown("### PlantNet Identification Results")
+        if not plantnet_df.empty:
+            # Dropdown for scientific names
+            selected_name = st.selectbox(
+                "Select a scientific name:",
+                scientific_names,
+                key="plantnet_scientific_name_select"
+            )
+            # Find the row for the selected name
+            selected_row = plantnet_df[plantnet_df['Scientific Name'] == selected_name].iloc[0].to_dict() if selected_name in plantnet_df['Scientific Name'].values else plantnet_df.iloc[0].to_dict()
+            # Reset toxicity show more state if a new plant is selected
+            if 'toxicity_show_more' in st.session_state and st.session_state.get('last_selected_name') != selected_name:
+                st.session_state['toxicity_show_more'] = False
+            st.session_state['last_selected_name'] = selected_name
+            if not selected_name:
+                st.info("Select a scientific name from the dropdown to see its details below.")
+                return
+            selected_scientific_name = selected_name
+            st.markdown("#### Selected Plant Details")
+            for k, v in selected_row.items():
+                st.write(f"**{k}:** {v}")
 
-    selected_name = selected_row['Scientific Name'] if selected_row and 'Scientific Name' in selected_row else scientific_names[0]
-
-    # Reset toxicity show more state if a new plant is selected
-    if 'toxicity_show_more' in st.session_state and st.session_state.get('last_selected_name') != selected_name:
-        st.session_state['toxicity_show_more'] = False
-    st.session_state['last_selected_name'] = selected_name
-    if not selected_name:
-        st.info("Select a scientific name from the table to see its details below.")
-        return
-
-    # Query invasive species database for the selected scientific name
-    fs_results = query_invasive_species_database(selected_name)
-    # If user selected a row, filter fs_results to only matching NRCS_PLANT_CODE (if available)
-    if fs_results and selected_row and 'NRCS Plant Code' in selected_row:
-        code = selected_row['NRCS Plant Code']
-        filtered_features = [f for f in fs_results.get('features', []) if f.get('attributes', {}).get('NRCS_PLANT_CODE', '') == code]
-        fs_results = dict(fs_results)  # shallow copy
-        fs_results['features'] = filtered_features
-    if fs_results:
-        st.markdown("### Invasive Species Information from the Forest Service 🌍")
-        show_invasive_species_results(fs_results)
-    with st.spinner("Fetching Wikipedia information..."):
-        wiki_data = get_wikipedia_summary(selected_name)
-    if wiki_data:
-        st.markdown(f"### {wiki_data.get('title', selected_name)} 🌱")
-        if 'thumbnail' in wiki_data:
-            st.image(wiki_data['thumbnail']['source'], width=200)
-        description = wiki_data.get('description')
-        if description:
-            st.markdown(f"**📝 Description:** {description}")
-        summary = wiki_data.get('extract')
-        if summary:
-            st.markdown(f"**📖 Summary:** {summary}")
-        timestamp = wiki_data.get('timestamp')
-        if timestamp:
-            st.markdown(f"**⏰ Last updated:** {timestamp}")
-
-        # --- Invasive Species Section for this species ---
-        page_title = wiki_data.get('title', selected_name)
-        with st.spinner("Fetching invasive species info..."):
-            invasive_section = get_wikipedia_section(page_title, "Invasive species")
-        st.markdown('**🦠 Invasive Species (from Wikipedia page):**')
-        if invasive_section:
-            st.markdown(invasive_section)
+            # Query invasive species database for the selected scientific name
+            fs_results = query_invasive_species_database(selected_name)
+            # Build invasive_df, summary_df, invasive_map_df for other tabs
+            if fs_results:
+                features = fs_results.get('features', [])
+                FIELD_LABELS = {
+                    'NRCS_PLANT_CODE': '🆔 NRCS Plant Code',
+                    'SCIENTIFIC_NAME': '🔬 Scientific Name',
+                    'COMMON_NAME': '🌱 Common Name',
+                    'PROJECT_CODE': '📁 Project Code',
+                    'PLANT_STATUS': '🚦 Plant Status',
+                    'FS_UNIT_NAME': '🏞️ Forest Name',
+                    'EXAMINERS': '🧑‍🔬 Examiners',
+                    'LAST_UPDATE': 'Updated',
+                }
+                data = []
+                invasive_points = []
+                for feature in features:
+                    attributes = feature.get('attributes', {})
+                    row = {label: attributes.get(key, '') for key, label in FIELD_LABELS.items()}
+                    data.append(row)
+                    geom = feature.get('geometry', {})
+                    name = attributes.get('FS_UNIT_NAME', '')
+                    if 'x' in geom and 'y' in geom:
+                        lon, lat = geom['x'], geom['y']
+                        invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': name})
+                    elif 'rings' in geom and geom['rings']:
+                        largest_ring = max(geom['rings'], key=lambda ring: len(ring))
+                        xs = [pt[0] for pt in largest_ring]
+                        ys = [pt[1] for pt in largest_ring]
+                        lon = float(np.mean(xs))
+                        lat = float(np.mean(ys))
+                        invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': name})
+                invasive_df = pd.DataFrame(data)
+                invasive_map_df = pd.DataFrame(invasive_points)
+                unit_col = '🏞️ Forest Name'
+                if unit_col in invasive_df.columns:
+                    summary_df = invasive_df.groupby(unit_col).size().reset_index(name='🧾 Record Count')
+                    summary_df = summary_df.sort_values('🧾 Record Count', ascending=False)
+            # Store for use in other tabs
+            st.session_state['invasive_df'] = invasive_df
+            st.session_state['summary_df'] = summary_df
+            st.session_state['invasive_map_df'] = invasive_map_df
+            st.session_state['selected_scientific_name'] = selected_scientific_name
         else:
-            st.info("No invasive species information available for this plant.")
+            st.info("No PlantNet results to display.")
 
-        # --- Toxicity Section for this species ---
-        with st.spinner("Fetching toxicity info..."):
-            toxicity_section = get_wikipedia_section(page_title, "Toxicity")
-        st.markdown('<div style="font-weight:bold; font-size:1.1em; margin-top:1.5em; margin-bottom:0.5em; color:#b30000;">☠️ Toxicity (from Wikipedia page):</div>', unsafe_allow_html=True)
-        if toxicity_section:
-            pretty_text = highlight_toxicity(toxicity_section)
-            words = pretty_text.split()
-            if len(words) > 150:
-                short_text = ' '.join(words[:150])
-                if 'toxicity_show_more' not in st.session_state:
-                    st.session_state['toxicity_show_more'] = False
-                if not st.session_state['toxicity_show_more']:
-                    st.markdown(f'<blockquote style="background:#fff6f6; border-left:5px solid #b30000; padding:1em 1.5em; border-radius:6px; margin:0 0 1em 0; font-size:1.05em; line-height:1.7; color:#222;">{short_text}...</blockquote>', unsafe_allow_html=True)
-                    if st.button('Show more', key='toxicity_show_more_btn'):
-                        st.session_state['toxicity_show_more'] = True
-                elif st.session_state['toxicity_show_more']:
-                    st.markdown(f'<blockquote style="background:#fff6f6; border-left:5px solid #b30000; padding:1em 1.5em; border-radius:6px; margin:0 0 1em 0; font-size:1.05em; line-height:1.7; color:#222;">{pretty_text}</blockquote>', unsafe_allow_html=True)
+    with tab2:
+        st.markdown("### Invasive Species Table (Forest Service)")
+        invasive_df = st.session_state.get('invasive_df', pd.DataFrame())
+        if not invasive_df.empty:
+            # Convert any columns with large integers (epoch ms) or ISO 8601 to yyyy-mm-dd
+            for col in invasive_df.columns:
+                col_dtype = invasive_df[col].dtype
+                # Only try numeric conversion for int/float columns, and string conversion for object columns
+                if pd.api.types.is_object_dtype(col_dtype):
+                    sample = invasive_df[col].dropna().astype(str).head(10)
+                    if sample.str.match(r"^\d{4}-\d{2}-\d{2}T").any() or sample.str.match(r"^\d{4}-\d{2}-\d{2}$").any():
+                        invasive_df[col] = pd.to_datetime(invasive_df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+                    elif sample.str.match(r"^\d{12,}").any() or sample.str.match(r"^\d{10,}").any():
+                        dt = pd.to_datetime(invasive_df[col], errors='coerce', unit='ms')
+                        if dt.isna().all():
+                            dt = pd.to_datetime(invasive_df[col], errors='coerce', unit='s')
+                        invasive_df[col] = dt.dt.strftime('%Y-%m-%d')
+                elif pd.api.types.is_integer_dtype(col_dtype) or pd.api.types.is_float_dtype(col_dtype):
+                    # Check if values are likely epoch ms or s
+                    sample = invasive_df[col].dropna().astype(str).head(10)
+                    if sample.str.match(r"^\d{12,}").any() or sample.str.match(r"^\d{10,}").any():
+                        dt = pd.to_datetime(invasive_df[col], errors='coerce', unit='ms')
+                        if dt.isna().all():
+                            dt = pd.to_datetime(invasive_df[col], errors='coerce', unit='s')
+                        invasive_df[col] = dt.dt.strftime('%Y-%m-%d')
+            show_aggrid(invasive_df, grid_key="invasive_grid")
+        else:
+            st.info("No invasive species records found.")
+
+    with tab3:
+        st.markdown("### Summary by Forest Name")
+        summary_df = st.session_state.get('summary_df', pd.DataFrame())
+        if not summary_df.empty:
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No summary available.")
+
+    with tab4:
+        st.markdown("### Invasive Species Map")
+        invasive_map_df = st.session_state.get('invasive_map_df', pd.DataFrame())
+        from map_utils import show_invasive_map
+        if not invasive_map_df.empty and {'lat', 'lon'}.issubset(invasive_map_df.columns):
+            show_invasive_map(invasive_map_df, width=800, height=600)
+        else:
+            st.info("No map data available for this species.")
+
+    with tab5:
+        from wikipedia_utils import get_wikipedia_summary
+        st.markdown("### Wikipedia Info")
+        selected_scientific_name = st.session_state.get('selected_scientific_name', None)
+        if selected_scientific_name:
+            wiki = get_wikipedia_summary(selected_scientific_name)
+            if wiki:
+                st.markdown(f"#### [{wiki.get('title', selected_scientific_name)}]({wiki.get('content_urls',{}).get('desktop',{}).get('page','')})")
+                if wiki.get('thumbnail') and wiki['thumbnail'].get('source'):
+                    st.image(wiki['thumbnail']['source'], width=200)
+                st.markdown(wiki.get('extract', 'No summary available.'))
             else:
-                st.markdown(f'<blockquote style="background:#fff6f6; border-left:5px solid #b30000; padding:1em 1.5em; border-radius:6px; margin:0 0 1em 0; font-size:1.05em; line-height:1.7; color:#222;">{pretty_text}</blockquote>', unsafe_allow_html=True)
+                st.info("No Wikipedia summary found.")
         else:
-            st.info("No toxicity information available for this plant.")
-
-        st.markdown(f"[🔗 Read more on Wikipedia]({wiki_data.get('content_urls', {}).get('desktop', {}).get('page', '')})")
+            st.info("No plant selected for Wikipedia lookup.")
 
 def query_invasive_species_database(scientific_name):
     url = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_InvasiveSpecies_01/MapServer/0/query"

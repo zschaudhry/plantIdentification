@@ -1,10 +1,24 @@
 
-
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import re
 import numpy as np
+from map_utils import show_invasive_map
+from wikipedia_utils import get_wikipedia_summary
+
+# --- Session-level caching for invasive species results ---
+def get_invasive_species_results_cached(scientific_name, fetch_func):
+    """
+    Retrieve invasive species results for a given scientific name, using session cache to avoid redundant API/database calls.
+    fetch_func: function to call if results are not cached. Should accept scientific_name as argument.
+    """
+    cache_key = f"invasive_results_{scientific_name}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    results = fetch_func(scientific_name)
+    st.session_state[cache_key] = results
+    return results
 
 def show_aggrid(df: pd.DataFrame, grid_key: str = "plant_grid"):
     """Display a DataFrame in an interactive AgGrid table with dynamic column widths."""
@@ -34,122 +48,76 @@ def normalize_name(n):
     n = re.sub(r'\s+', ' ', n)
     return n
 
-def show_invasive_species_results(fs_results):
-    features = fs_results.get('features', [])
-    if not features:
-        st.info("No invasive species data found for this plant.")
-        return
 
-    # --- Extract geometry for map ---
-    invasive_points = []
-    for feature in features:
-        geom = feature.get('geometry', {})
-        attrs = feature.get('attributes', {})
-        name = attrs.get('FS_UNIT_NAME', '')
-        orig_name = name
-        # Handle point geometry (already lon/lat)
-        if 'x' in geom and 'y' in geom:
-            lon, lat = geom['x'], geom['y']
-            invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': orig_name})
-        # Handle polygon geometry (rings, already lon/lat)
-        elif 'rings' in geom and geom['rings']:
-            largest_ring = max(geom['rings'], key=lambda ring: len(ring))
-            xs = [pt[0] for pt in largest_ring]
-            ys = [pt[1] for pt in largest_ring]
-            lon = float(np.mean(xs))
-            lat = float(np.mean(ys))
-            invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': orig_name})
 
-    invasive_map_df = pd.DataFrame(invasive_points)
-
-    # --- Build DataFrame for summary and AgGrid ---
-    FIELD_LABELS = {
-        'NRCS_PLANT_CODE': '🆔 NRCS Plant Code',
-        'SCIENTIFIC_NAME': '🔬 Scientific Name',
-        'COMMON_NAME': '🌱 Common Name',
-        'PROJECT_CODE': '📁 Project Code',
-        'PLANT_STATUS': '🚦 Plant Status',
-        'FS_UNIT_NAME': '🏞️ Forest Name',
-        'EXAMINERS': '🧑‍🔬 Examiners',
-        'LAST_UPDATE': 'Updated',
-    }
-    data = []
-    for feature in features:
-        attributes = feature.get('attributes', {})
-        row = {}
-        for key, label in FIELD_LABELS.items():
-            row[label] = attributes.get(key, '')
-        data.append(row)
-    df = pd.DataFrame(data)
-
-    # --- Convert Last Update from ms timestamp to date if needed ---
-    if 'Updated' in df.columns:
-        def parse_updated(val):
-            if pd.isna(val) or val == '' or str(val).strip() in ['0', '0.0', 'NaT', 'None', 'nan', 'null']:
-                return ''
-            sval = str(val).strip()
-            m = re.match(r"Date\((\d+)\)", sval)
-            if m:
-                ms = int(m.group(1))
-                sval = str(ms)
-            try:
-                fval = float(sval)
-                if fval > 100000000000:
-                    dt = pd.to_datetime(fval, unit='ms', errors='coerce')
-                elif fval > 1000000000:
-                    dt = pd.to_datetime(fval, unit='s', errors='coerce')
-                else:
-                    dt = pd.to_datetime(sval, errors='coerce')
-            except Exception:
-                dt = pd.to_datetime(sval, errors='coerce')
-            if pd.isna(dt):
-                return ''
-            return dt.strftime('%Y-%m-%d')
-        df['Updated'] = df['Updated'].apply(parse_updated)
-
-    # --- Summary Table and Map by Forest Name ---
-    unit_col = '🏞️ Forest Name'
-    if 'FS_UNIT_NAME' in df.columns and unit_col not in df.columns:
-        df[unit_col] = df['FS_UNIT_NAME']
-    selected_unit = 'All'
-
-    # --- Map ---
-    if not invasive_map_df.empty:
-        st.markdown('## 🗺️ Invasive Species Map ')
-        import folium
-        from streamlit_folium import st_folium
-        m = folium.Map(location=[39.8283, -98.5795], zoom_start=3, tiles='OpenStreetMap')
-        for _, row in invasive_map_df.iterrows():
-            folium.CircleMarker(
-                location=[row['lat'], row['lon']],
-                radius=8,
-                color='#ff6600',
-                fill=True,
-                fill_color='#ff6600',
-                fill_opacity=0.7,
-                tooltip=f"<b>{row['orig_name']}</b>",
-                parse_html=True
-            ).add_to(m)
-        st_folium(m, width=0)
-
-    # --- Summary Table and Filter ---
-    if unit_col in df.columns:
-        summary = df.groupby(unit_col).size().reset_index(name='🧾 Record Count')
-        summary['orig_name'] = summary[unit_col]
-        summary['norm_name'] = summary[unit_col].map(normalize_name)
-        summary = summary.sort_values('🧾 Record Count', ascending=False)
-        st.markdown('## 🏞️ Summary by Forest Name')
-        st.dataframe(summary[[unit_col, '🧾 Record Count']], use_container_width=True, hide_index=True)
-
-        all_units = summary[unit_col].dropna().tolist()
-        all_units = [u for u in all_units if u]
-        selected_unit = st.selectbox('🏞️ Filter by Forest Name', ['All'] + all_units, key='unit_filter')
-        if selected_unit != 'All':
-            df = df[df[unit_col] == selected_unit]
-
-    # --- Show AgGrid or message if empty ---
-    if not df.empty:
-        grid_key = f"invasive_species_grid_{selected_unit}"
-        show_aggrid(df, grid_key=grid_key)
+def show_plantnet_tab(plantnet_df):
+    st.markdown("### PlantNet Identification Results")
+    if not plantnet_df.empty:
+        show_aggrid(plantnet_df, grid_key="plantnet_grid")
     else:
-        st.info("No records found for the selected Forest Name.")
+        st.info("No PlantNet results to display.")
+
+def show_forest_tab(invasive_df):
+    st.markdown("### Invasive Species Table (Forest Service)")
+    if not invasive_df.empty:
+        show_aggrid(invasive_df, grid_key="invasive_grid")
+    else:
+        st.info("No invasive species records found.")
+
+def show_summary_tab(summary_df):
+    st.markdown("### Summary by Forest Name")
+    if not summary_df.empty:
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No summary available.")
+
+def show_map_wikipedia_tab(invasive_map_df, selected_scientific_name):
+    from wikipedia_utils import get_wikipedia_summary
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown("### Invasive Species Map")
+        show_invasive_map(invasive_map_df)
+    with col2:
+        st.markdown("### Wikipedia Info")
+        wiki = get_wikipedia_summary(selected_scientific_name)
+        if wiki:
+            st.markdown(f"#### [{wiki.get('title', selected_scientific_name)}]({wiki.get('content_urls',{}).get('desktop',{}).get('page','')})")
+            if wiki.get('thumbnail') and wiki['thumbnail'].get('source'):
+                st.image(wiki['thumbnail']['source'], width=200)
+            st.markdown(wiki.get('extract', 'No summary available.'))
+        else:
+            st.info("No Wikipedia summary found.")
+
+def show_wikipedia_tab(selected_scientific_name):
+    st.markdown("### Wikipedia Info")
+    wiki = get_wikipedia_summary(selected_scientific_name)
+    if wiki:
+        st.markdown(f"#### [{wiki.get('title', selected_scientific_name)}]({wiki.get('content_urls',{}).get('desktop',{}).get('page','')})")
+        if wiki.get('thumbnail') and wiki['thumbnail'].get('source'):
+            st.image(wiki['thumbnail']['source'], width=200)
+        st.markdown(wiki.get('extract', 'No summary available.'))
+    else:
+        st.info("No Wikipedia summary found.")
+
+def show_full_results(plantnet_df, invasive_df, summary_df, invasive_map_df, selected_scientific_name):
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "PlantNet Table", "Forest Table", "Summary Table", "Map & Wikipedia"
+    ])
+    with tab1:
+        show_plantnet_tab(plantnet_df)
+    with tab2:
+        df = st.session_state.get('invasive_df', invasive_df)
+        # Convert any ISO 8601 date columns to yyyy-mm-dd
+        if isinstance(df, pd.DataFrame):
+            for col in df.columns:
+                if df[col].dtype == object and df[col].astype(str).str.match(r'^\d{4}-\d{2}-\d{2}T').any():
+                    # Column contains ISO 8601 dates, convert to yyyy-mm-dd
+                    df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+        show_forest_tab(df)
+    with tab3:
+        summary = st.session_state.get('summary_df', summary_df)
+        show_summary_tab(summary)
+    with tab4:
+        map_df = st.session_state.get('invasive_map_df', invasive_map_df)
+        sci_name = st.session_state.get('selected_scientific_name', selected_scientific_name)
+        show_map_wikipedia_tab(map_df, sci_name)

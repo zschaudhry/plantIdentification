@@ -5,3 +5,4 @@ pandas
 st-aggrid
 chardet
 charset_normalizer
+pydeck
