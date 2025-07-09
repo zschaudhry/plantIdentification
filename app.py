@@ -5,9 +5,6 @@ from dotenv import load_dotenv
 import pandas as pd
 from invasive_utils import show_invasive_species_results
 from typing import Optional
-
-
-
 from wikipedia_utils import get_wikipedia_section, get_wikipedia_summary
 from utils import highlight_toxicity
 from invasive_utils import show_aggrid
@@ -87,23 +84,38 @@ def main():
         return
 
     df = build_results_dataframe(result['results'])
-    show_aggrid(df, grid_key="plant_grid")
+    aggrid_response = show_aggrid(df, grid_key="plant_grid")
 
     scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
     if not scientific_names:
         st.warning("No scientific names found in results.")
         return
 
-    selected_name = st.selectbox("Select a scientific name:", scientific_names, index=0)
+    # Get selected row from AgGrid (if any), else default to first row
+    selected_row = None
+    if aggrid_response and aggrid_response.get('selected_rows'):
+        selected_row = aggrid_response['selected_rows'][0]
+    elif not df.empty:
+        selected_row = df.iloc[0].to_dict()
+
+    selected_name = selected_row['Scientific Name'] if selected_row and 'Scientific Name' in selected_row else scientific_names[0]
 
     # Reset toxicity show more state if a new plant is selected
     if 'toxicity_show_more' in st.session_state and st.session_state.get('last_selected_name') != selected_name:
         st.session_state['toxicity_show_more'] = False
     st.session_state['last_selected_name'] = selected_name
     if not selected_name:
-        st.info("Select a scientific name from the dropdown to see its details below.")
+        st.info("Select a scientific name from the table to see its details below.")
         return
-    fs_results=query_invasive_species_database(selected_name)
+
+    # Query invasive species database for the selected scientific name
+    fs_results = query_invasive_species_database(selected_name)
+    # If user selected a row, filter fs_results to only matching NRCS_PLANT_CODE (if available)
+    if fs_results and selected_row and 'NRCS Plant Code' in selected_row:
+        code = selected_row['NRCS Plant Code']
+        filtered_features = [f for f in fs_results.get('features', []) if f.get('attributes', {}).get('NRCS_PLANT_CODE', '') == code]
+        fs_results = dict(fs_results)  # shallow copy
+        fs_results['features'] = filtered_features
     if fs_results:
         st.markdown("### Invasive Species Information from the Forest Service 🌍")
         show_invasive_species_results(fs_results)
@@ -172,8 +184,9 @@ def query_invasive_species_database(scientific_name):
     params = {
         'where': f"SCIENTIFIC_NAME='{scientific_name}'",
         'outFields': ",".join(out_fields),
-        'returnGeometry': 'false',
+        'returnGeometry': 'true',
         'f': 'json'
+        #'resultRecordCount': 10  # Limit to 10 for debugging
     }
 
     response = requests.get(url, params=params)
