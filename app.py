@@ -167,98 +167,109 @@ def show_wikipedia_tab(selected_scientific_name):
 
 # --- Main App Logic ---
 def main():
-    uploaded_file = st.sidebar.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"])
-    if not uploaded_file:
+    st.sidebar.markdown("""
+    ### 🌿 Welcome to Plant Species Identifier!
+    Upload a plant image and select the organ for best results. Results and info will appear in tabs below.
+    """)
+    with st.sidebar.form(key="input_form"):
+        uploaded_file = st.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"], help="Upload a clear image of the plant.")
+        organ_options = ["auto", "leaf", "flower", "fruit", "bark"]
+        organ = st.selectbox(
+            "🌱 Select the organ shown in the image:",
+            organ_options,
+            index=0,
+            help="🌸 Choose the plant part most visible in your photo for best results."
+        )
+        submitted = st.form_submit_button("🔎 Identify Plant")
+        reset = st.form_submit_button("🔄 Reset")
+    if reset:
+        st.session_state.clear()
+        st.rerun()
+    if not uploaded_file and not submitted:
         st.info("Please upload an image to begin.")
         return
-    st.image(uploaded_file, caption="Uploaded plant image", width=150)
-    api_key = get_api_key()
-    if not api_key:
-        return
-    organ_options = ["auto", "leaf", "flower", "fruit", "bark"]
-    organ = st.selectbox(
-        "🌱 Select the organ shown in the image:",
-        organ_options,
-        index=0,
-        help="🌸 Choose the plant part most visible in your photo for best results."
-    )
-    with st.spinner("🔎 Identifying..."):
-        result = identify_plant(uploaded_file, organ, api_key)
-    if not result or 'results' not in result or not isinstance(result['results'], list) or len(result['results']) == 0:
-        st.warning("❌ No species identified by the Pl@ntNet API. Please try another image or check your input.")
-        return
-    df = build_results_dataframe(result['results'])
-    plantnet_df = df.copy()
-    invasive_df = pd.DataFrame()
-    summary_df = pd.DataFrame()
-    invasive_map_df = pd.DataFrame()
-    selected_scientific_name = None
-    scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
-    if not scientific_names:
-        st.warning("❌ No scientific names found in results.")
-        return
-    # Query invasive species database for the selected scientific name (will be set in Tab 1)
-    fs_results = None
-    import invasive_utils as iu
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🌱 Pl@ntNet Data",
-        "🌲 Forest Table",
-        "📊 Summary Table",
-        "🗺️ Map",
-        "📚 Wikipedia Info"
-    ])
-    with tab1:
-        selected_scientific_name = show_plantnet_tab(plantnet_df, scientific_names)
-        if selected_scientific_name:
-            fs_results = query_invasive_species_database(selected_scientific_name)
-            if fs_results:
-                features = fs_results.get('features', [])
-                FIELD_LABELS = {
-                    'NRCS_PLANT_CODE': '🆔 NRCS Plant Code',
-                    'SCIENTIFIC_NAME': '🔬 Scientific Name',
-                    'COMMON_NAME': '🌱 Common Name',
-                    'PROJECT_CODE': '📁 Project Code',
-                    'PLANT_STATUS': '🚦 Plant Status',
-                    'FS_UNIT_NAME': '🏞️ Forest Name',
-                    'EXAMINERS': '🧑‍🔬 Examiners',
-                    'LAST_UPDATE': 'Updated',
-                }
-                data = []
-                invasive_points = []
-                for feature in features:
-                    attributes = feature.get('attributes', {})
-                    row = {label: attributes.get(key, '') for key, label in FIELD_LABELS.items()}
-                    data.append(row)
-                    geom = feature.get('geometry', {})
-                    name = attributes.get('FS_UNIT_NAME', '')
-                    if 'x' in geom and 'y' in geom:
-                        lon, lat = geom['x'], geom['y']
-                        invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': name})
-                    elif 'rings' in geom and geom['rings']:
-                        largest_ring = max(geom['rings'], key=lambda ring: len(ring))
-                        xs = [pt[0] for pt in largest_ring]
-                        ys = [pt[1] for pt in largest_ring]
-                        lon = float(sum(xs) / len(xs))
-                        lat = float(sum(ys) / len(ys))
-                        invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': name})
-                invasive_df = pd.DataFrame(data)
-                invasive_map_df = pd.DataFrame(invasive_points)
-                unit_col = '🏞️ Forest Name'
-                if unit_col in invasive_df.columns:
-                    summary_df = invasive_df.groupby(unit_col).size().reset_index(name='🧾 Record Count')
-                    summary_df = summary_df.sort_values('🧾 Record Count', ascending=False)
-            st.session_state['invasive_df'] = invasive_df
-            st.session_state['summary_df'] = summary_df
-            st.session_state['invasive_map_df'] = invasive_map_df
-            st.session_state['selected_scientific_name'] = selected_scientific_name
-    with tab2:
-        show_forest_tab(st.session_state.get('invasive_df', pd.DataFrame()))
-    with tab3:
-        show_summary_tab(st.session_state.get('summary_df', pd.DataFrame()))
-    with tab4:
-        show_map_tab(st.session_state.get('invasive_map_df', pd.DataFrame()))
-    with tab5:
-        show_wikipedia_tab(st.session_state.get('selected_scientific_name', None))
+    if submitted and uploaded_file:
+        st.image(uploaded_file, caption="Uploaded plant image", width=150)
+        api_key = get_api_key()
+        if not api_key:
+            return
+        with st.spinner("🔎 Identifying..."):
+            result = identify_plant(uploaded_file, organ, api_key)
+        if not result or 'results' not in result or not isinstance(result['results'], list) or len(result['results']) == 0:
+            st.warning("❌ No species identified by the Pl@ntNet API. Please try another image or check your input.")
+            return
+        df = build_results_dataframe(result['results'])
+        plantnet_df = df.copy()
+        invasive_df = pd.DataFrame()
+        summary_df = pd.DataFrame()
+        invasive_map_df = pd.DataFrame()
+        selected_scientific_name = None
+        scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
+        if not scientific_names:
+            st.warning("❌ No scientific names found in results.")
+            return
+        # Query invasive species database for the selected scientific name (will be set in Tab 1)
+        fs_results = None
+        import invasive_utils as iu
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "🌱 Pl@ntNet Data",
+            "🌲 Forest Table",
+            "📊 Summary Table",
+            "🗺️ Map",
+            "📚 Wikipedia Info"
+        ])
+        with tab1:
+            selected_scientific_name = show_plantnet_tab(plantnet_df, scientific_names)
+            if selected_scientific_name:
+                fs_results = query_invasive_species_database(selected_scientific_name)
+                if fs_results:
+                    features = fs_results.get('features', [])
+                    FIELD_LABELS = {
+                        'NRCS_PLANT_CODE': '🆔 NRCS Plant Code',
+                        'SCIENTIFIC_NAME': '🔬 Scientific Name',
+                        'COMMON_NAME': '🌱 Common Name',
+                        'PROJECT_CODE': '📁 Project Code',
+                        'PLANT_STATUS': '🚦 Plant Status',
+                        'FS_UNIT_NAME': '🏞️ Forest Name',
+                        'EXAMINERS': '🧑‍🔬 Examiners',
+                        'LAST_UPDATE': 'Updated',
+                    }
+                    data = []
+                    invasive_points = []
+                    for feature in features:
+                        attributes = feature.get('attributes', {})
+                        row = {label: attributes.get(key, '') for key, label in FIELD_LABELS.items()}
+                        data.append(row)
+                        geom = feature.get('geometry', {})
+                        name = attributes.get('FS_UNIT_NAME', '')
+                        if 'x' in geom and 'y' in geom:
+                            lon, lat = geom['x'], geom['y']
+                            invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': name})
+                        elif 'rings' in geom and geom['rings']:
+                            largest_ring = max(geom['rings'], key=lambda ring: len(ring))
+                            xs = [pt[0] for pt in largest_ring]
+                            ys = [pt[1] for pt in largest_ring]
+                            lon = float(sum(xs) / len(xs))
+                            lat = float(sum(ys) / len(ys))
+                            invasive_points.append({'lat': lat, 'lon': lon, 'orig_name': name})
+                    invasive_df = pd.DataFrame(data)
+                    invasive_map_df = pd.DataFrame(invasive_points)
+                    unit_col = '🏞️ Forest Name'
+                    if unit_col in invasive_df.columns:
+                        summary_df = invasive_df.groupby(unit_col).size().reset_index(name='🧾 Record Count')
+                        summary_df = summary_df.sort_values('🧾 Record Count', ascending=False)
+                st.session_state['invasive_df'] = invasive_df
+                st.session_state['summary_df'] = summary_df
+                st.session_state['invasive_map_df'] = invasive_map_df
+                st.session_state['selected_scientific_name'] = selected_scientific_name
+        with tab2:
+            show_forest_tab(st.session_state.get('invasive_df', pd.DataFrame()))
+        with tab3:
+            show_summary_tab(st.session_state.get('summary_df', pd.DataFrame()))
+        with tab4:
+            show_map_tab(st.session_state.get('invasive_map_df', pd.DataFrame()))
+        with tab5:
+            show_wikipedia_tab(st.session_state.get('selected_scientific_name', None))
 
 
 if __name__ == "__main__":
