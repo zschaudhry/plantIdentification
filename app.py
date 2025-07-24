@@ -33,8 +33,17 @@ def identify_plant(image_file, organ, api_key):
         response = requests.post(url, files=files, data=data)
         response.raise_for_status()
         return response.json()
-    except Exception as e:
-        st.error(f"Pl@ntNet API request failed: {e}")
+    except requests.exceptions.HTTPError as http_err:
+        status_code = getattr(http_err.response, 'status_code', None)
+        if status_code == 404:
+            st.error("❌ The Pl@ntNet API endpoint could not be reached (404 Not Found). Please check your API key and try again later.")
+        elif status_code == 400:
+            st.error("❌ The uploaded image could not be recognized as a plant. Please try a different image, ensure the plant is clearly visible, or check your input.")
+        else:
+            st.error("❌ An error occurred while contacting the Pl@ntNet API. Please try again later.")
+        return None
+    except Exception:
+        st.error("❌ Unable to process the image due to a network or server error. Please try again later.")
         return None
 
 
