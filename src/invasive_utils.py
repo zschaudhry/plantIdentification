@@ -1,11 +1,11 @@
-
+# ...existing code...
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import re
 import numpy as np
-from map_utils import show_invasive_map
-from wikipedia_utils import get_wikipedia_summary
+from src.map_utils import show_invasive_map
+from src.wikipedia_utils import get_wikipedia_summary
 
 # --- Session-level caching for invasive species results ---
 def get_invasive_species_results_cached(scientific_name, fetch_func):
@@ -43,12 +43,10 @@ def show_aggrid(df: pd.DataFrame, grid_key: str = "plant_grid"):
 def normalize_name(n):
     if not isinstance(n, str):
         return ''
-    n = n.replace('🏞️', '').strip().lower()
+    n = n.replace('\ud83c\udfde\ufe0f', '').strip().lower()
     n = re.sub(r'[^a-z0-9 ]+', '', n)
     n = re.sub(r'\s+', ' ', n)
     return n
-
-
 
 def show_plantnet_tab(plantnet_df):
     st.markdown("### PlantNet Identification Results")
@@ -72,7 +70,7 @@ def show_summary_tab(summary_df):
         st.info("No summary available.")
 
 def show_map_wikipedia_tab(invasive_map_df, selected_scientific_name):
-    from wikipedia_utils import get_wikipedia_summary
+    from src.wikipedia_utils import get_wikipedia_summary
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("### Invasive Species Map")

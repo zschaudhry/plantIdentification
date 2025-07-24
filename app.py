@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 from typing import Optional
-from invasive_utils import show_aggrid
+from src.invasive_utils import show_aggrid
 
 # Load environment variables from .env file
 load_dotenv()
@@ -142,7 +142,7 @@ def show_summary_tab(summary_df):
 
 def show_map_tab(invasive_map_df):
     st.markdown("### 🗺️ Invasive Species Map")
-    from map_utils import show_invasive_map
+    from src.map_utils import show_invasive_map
     if not invasive_map_df.empty and {'lat', 'lon'}.issubset(invasive_map_df.columns):
         show_invasive_map(invasive_map_df, width=800, height=600)
     else:
@@ -150,7 +150,7 @@ def show_map_tab(invasive_map_df):
 
 
 def show_wikipedia_tab(selected_scientific_name):
-    from wikipedia_utils import get_wikipedia_summary
+    from src.wikipedia_utils import get_wikipedia_summary
     st.markdown("### 📚 Wikipedia Info")
     if selected_scientific_name:
         wiki = get_wikipedia_summary(selected_scientific_name)
@@ -195,8 +195,9 @@ def main():
             return
         with st.spinner("🔎 Identifying..."):
             result = identify_plant(uploaded_file, organ, api_key)
+        # Graceful fail if image is not a plant or can't be recognized
         if not result or 'results' not in result or not isinstance(result['results'], list) or len(result['results']) == 0:
-            st.warning("❌ No species identified by the Pl@ntNet API. Please try another image or check your input.")
+            st.error("❌ The uploaded image could not be recognized as a plant. Please try a different image, ensure the plant is clearly visible, or check your input.")
             return
         df = build_results_dataframe(result['results'])
         plantnet_df = df.copy()
@@ -206,11 +207,10 @@ def main():
         selected_scientific_name = None
         scientific_names = df['Scientific Name'].tolist() if 'Scientific Name' in df.columns else []
         if not scientific_names:
-            st.warning("❌ No scientific names found in results.")
+            st.error("❌ No recognizable plant species found in the image. Please try another image.")
             return
         # Query invasive species database for the selected scientific name (will be set in Tab 1)
         fs_results = None
-        import invasive_utils as iu
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🌱 Pl@ntNet Data",
             "🌲 Forest Table",
